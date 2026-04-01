@@ -1,6 +1,6 @@
 # Sdocx & zip file for data
-*.sdocx
-*.zip
+# *.sdocx
+# *.zip
 test_data/*
 
 # Python cache
