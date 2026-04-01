@@ -1,0 +1,10 @@
+# Sdocx & zip file for data
+*.sdocx
+*.zip
+test_data/*
+
+# Python cache
+__pycache__
+
+# Prompts
+.prompts/
