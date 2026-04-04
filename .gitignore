@@ -2,6 +2,8 @@
 # *.sdocx
 # *.zip
 test_data/*
+test_output/*
+test_output_cli/*
 
 # Python cache
 __pycache__
