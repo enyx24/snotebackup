@@ -1,4 +1,5 @@
 import os
+from pathlib import Path
 
 PATTERN = os.path.join(
     os.environ["LOCALAPPDATA"],
@@ -30,6 +31,22 @@ def discover_appdata() -> str:
     if len(candidates) > 1:
         raise FileExistsError(f"Multiple Samsung Notes data directories found: {candidates}")
     return candidates[0]
+
+
+def discover_samsung_notes_storage_db() -> str:
+    storage_dir = discover_appdata()
+    candidate = Path(storage_dir).parent / "Storage.sqlite"
+    if not candidate.is_file():
+        raise FileNotFoundError(f"Storage.sqlite not found: {candidate}")
+    return str(candidate)
+
+
+def discover_samsung_notes_pen_storage_db() -> str:
+    storage_dir = discover_appdata()
+    candidate = Path(storage_dir).parent / "PenStorage.sqlite"
+    if not candidate.is_file():
+        raise FileNotFoundError(f"PenStorage.sqlite not found: {candidate}")
+    return str(candidate)
 
 if __name__ == "__main__":
     try:

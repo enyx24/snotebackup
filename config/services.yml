@@ -1,0 +1,22 @@
+services:
+  note_api:
+    enabled: true
+    db: 'C:\Users\ASUS\AppData\Local\Packages\SAMSUNGELECTRONICSCoLtd.SamsungNotes_wyx1vj98g3asy\LocalState\Storage.sqlite'
+    source: 'C:\Users\ASUS\AppData\Local\Packages\SAMSUNGELECTRONICSCoLtd.SamsungNotes_wyx1vj98g3asy\LocalState\wdoc'
+    host: "127.0.0.1"
+    port: 5055
+    refresh_seconds: 60
+    token: "change-me-note-api-token"
+    features:
+      download: true
+      media_review: true
+
+  backup_ui:
+    enabled: true
+    note_api_url: "http://127.0.0.1:5055"
+    token: "change-me-note-api-token"
+    destination: 'D:\backupnotestest'
+    host: "127.0.0.1"
+    port: 5056
+    refresh_seconds: 60
+    full_scan_interval_hours: 6
