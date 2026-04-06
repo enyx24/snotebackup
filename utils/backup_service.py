@@ -53,7 +53,7 @@ class SyncController:
         self._last_result = None
         self._last_error = None
 
-    def start(self) -> dict:
+    def start(self, force_reconcile: bool = False) -> dict:
         with self._lock:
             if self._running:
                 return {"accepted": False, "running": True, "message": "sync already running"}
@@ -62,7 +62,7 @@ class SyncController:
 
         def _worker():
             try:
-                self._last_result = _serialize(self.service.sync_now())
+                self._last_result = _serialize(self.service.sync_now(force_reconcile=force_reconcile))
             except Exception as exc:
                 self._last_error = str(exc)
             finally:
@@ -125,7 +125,8 @@ def _ui_template() -> str:
 <main>
     <div class="card">
         <div class="row">
-            <button id="syncBtn">Run Sync (Background)</button>
+            <button id="syncBtn">Run Sync</button>
+            <button id="quickSyncBtn" class="secondary">Quick Sync</button>
             <button id="refreshBtn" class="secondary">Refresh</button>
             <input id="searchInput" placeholder="Search by note content/title" style="flex:1; min-width:220px; border:1px solid #1f2937; background:#111827; color:#e5e7eb; border-radius:10px; padding:10px 12px;" />
             <button id="searchBtn">Search</button>
@@ -172,7 +173,7 @@ function dayKey(marker) {
 }
 
 function tag(item) {
-    return item.deleted_on_app ? `<span class='tag deleted'>deleted_on_app</span>` : `<span class='tag active'>active_on_app</span>`;
+    return item.deleted_on_app ? `<span class='tag deleted'>deleted</span>` : `<span class='tag active'>active</span>`;
 }
 
 function renderItems(items, append=false) {
@@ -251,6 +252,9 @@ async function loadReview(uuid) {
     const purge = document.getElementById('purgeBtn');
     if (purge) {
         purge.onclick = async () => {
+            if (!confirm(`Delete backed-up file for "${data.title || data.uuid}"? This action cannot be undone.`)) {
+                return;
+            }
             const resp = await fetch(`/backup/${encodeURIComponent(data.uuid)}/purge`, { method: 'POST' });
             const payload = await resp.json();
             alert(payload.status || payload.error || 'done');
@@ -269,13 +273,22 @@ async function refreshSummary() {
     document.getElementById('summary').textContent = `active ${summary.active} • deleted ${summary.deleted_on_app} • total ${summary.total}`;
 }
 
+let lastSyncResult = null;
+
 async function pollSyncStatus() {
     const s = await fetch('/sync/status').then(r => r.json());
     if (s.running) {
         document.getElementById('syncState').textContent = 'syncing in background...';
     } else if (s.last_error) {
         document.getElementById('syncState').textContent = 'sync error: ' + s.last_error;
+        lastSyncResult = null;
     } else if (s.last_result) {
+        // When sync completes, auto-refresh notes if result changed
+        if (lastSyncResult !== JSON.stringify(s.last_result)) {
+            lastSyncResult = JSON.stringify(s.last_result);
+            await refreshSummary();
+            await loadNotes(true);
+        }
         document.getElementById('syncState').textContent = `last sync changed ${s.last_result.changed_count || 0}`;
     }
 }
@@ -296,6 +309,14 @@ document.getElementById('syncBtn').addEventListener('click', async () => {
     const resp = await fetch('/sync/start', { method: 'POST' });
     const payload = await resp.json();
     state.textContent = resp.ok ? (payload.message || 'sync started') : (payload.error || 'sync error');
+});
+
+document.getElementById('quickSyncBtn').addEventListener('click', async () => {
+    const state = document.getElementById('syncState');
+    state.textContent = 'starting quick sync...';
+    const resp = await fetch('/sync/quick', { method: 'POST' });
+    const payload = await resp.json();
+    state.textContent = resp.ok ? (payload.message || 'quick sync started') : (payload.error || 'sync error');
 });
 
 document.getElementById('refreshBtn').addEventListener('click', async () => refresh());
@@ -343,12 +364,17 @@ def create_app(service: IncrementalBackupService) -> Flask:
 
     @app.post("/sync")
     def sync():
-        payload = sync_controller.start()
+        payload = sync_controller.start(force_reconcile=True)
         return jsonify(payload), (202 if payload.get("accepted") else 200)
 
     @app.post("/sync/start")
     def sync_start():
-        payload = sync_controller.start()
+        payload = sync_controller.start(force_reconcile=True)
+        return jsonify(payload), (202 if payload.get("accepted") else 200)
+
+    @app.post("/sync/quick")
+    def sync_quick():
+        payload = sync_controller.start(force_reconcile=False)
         return jsonify(payload), (202 if payload.get("accepted") else 200)
 
     @app.get("/sync/status")

@@ -5,6 +5,7 @@ import threading
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Dict, List, Optional
+import traceback
 
 from core.backup.index_store import BackupIndexStore
 from core.backup.logging import create_run_artifacts, write_csv, write_metadata
@@ -26,14 +27,18 @@ def _parse_iso(value: Optional[str]) -> Optional[datetime]:
 
 
 def _marker(note: Dict) -> int:
+    candidates: List[int] = []
     for key in ("last_db_updated_at", "modified_at", "created_at"):
         value = note.get(key)
-        if value:
-            try:
-                return int(value)
-            except Exception:
-                continue
-    return 0
+        if value is None:
+            continue
+        try:
+            marker = int(value)
+        except Exception:
+            continue
+        if marker > 0:
+            candidates.append(marker)
+    return max(candidates) if candidates else 0
 
 
 class IncrementalBackupService:
@@ -71,6 +76,10 @@ class IncrementalBackupService:
         self._last_run_artifacts: Optional[RunArtifacts] = None
 
         self._load_state()
+
+    def _log(self, message: str) -> None:
+        timestamp = _utc_now().isoformat()
+        print(f"[{timestamp}] [incremental-backup] {message}", flush=True)
 
     def _load_state(self) -> None:
         if not self.state_path.exists():
@@ -116,14 +125,19 @@ class IncrementalBackupService:
 
     def _run(self) -> None:
         try:
+            self._log("worker starting immediate sync")
             self.sync_now()
         except Exception:
-            pass
+            self._log("initial sync failed; worker will continue")
+            traceback.print_exc()
 
         while not self._stop_event.wait(self.refresh_seconds):
             try:
+                self._log("worker running scheduled sync")
                 self.sync_now()
             except Exception:
+                self._log("scheduled sync failed; worker will retry next cycle")
+                traceback.print_exc()
                 continue
 
     def _download_to_destination(self, uuid: str) -> ConversionResult:
@@ -157,8 +171,15 @@ class IncrementalBackupService:
         backup_artifact = str(conversion.output_path) if (conversion and conversion.successful) else None
         self.index_store.upsert_note(note=note, now_iso=now.isoformat(), backup_artifact=backup_artifact)
 
-    def _run_full_scan_reconcile(self, now: datetime) -> None:
+    def _run_full_scan_reconcile(
+        self,
+        now: datetime,
+        processed_uuids: set[str],
+        force_repair: bool = False,
+    ) -> tuple[List[ConversionResult], int]:
+        repair_results: List[ConversionResult] = []
         active_uuids = set()
+        max_seen_marker = 0
         offset = 0
 
         while True:
@@ -171,11 +192,48 @@ class IncrementalBackupService:
                 uuid = note.get("uuid")
                 if not uuid:
                     continue
+
+                remote_marker = _marker(note)
+                if remote_marker > max_seen_marker:
+                    max_seen_marker = remote_marker
+
                 deleted_on_app = bool(note.get("deleted_on_app") or note.get("deleted_status"))
+                conversion = None
+
                 if not deleted_on_app:
                     active_uuids.add(uuid)
 
-                self.index_store.upsert_note(note=note, now_iso=now.isoformat(), backup_artifact=None)
+                    if force_repair and uuid not in processed_uuids:
+                        indexed = self.index_store.get_note(uuid)
+
+                        indexed_marker = 0
+                        if indexed is not None:
+                            try:
+                                indexed_marker = int(indexed.get("last_marker") or 0)
+                            except Exception:
+                                indexed_marker = 0
+
+                        artifact_exists = False
+                        if indexed is not None:
+                            last_backup_artifact = indexed.get("last_backup_artifact")
+                            if last_backup_artifact:
+                                artifact_exists = Path(last_backup_artifact).exists()
+                        if not artifact_exists:
+                            artifact_exists = (self.destination_dir / f"{uuid}.sdocx").exists()
+
+                        repair_needed = (
+                            indexed is None
+                            or bool(indexed.get("deleted_on_app"))
+                            or remote_marker > indexed_marker
+                            or not artifact_exists
+                        )
+
+                        if repair_needed:
+                            conversion = self._download_to_destination(uuid)
+                            processed_uuids.add(uuid)
+                            repair_results.append(conversion)
+
+                self._update_index_from_sync(note, now=now, conversion=conversion)
 
             if len(items) < self.page_size:
                 break
@@ -185,23 +243,29 @@ class IncrementalBackupService:
             self.index_store.reconcile_full_scan(active_uuids=active_uuids)
 
         self._last_full_scan_at = now
+        return repair_results, max_seen_marker
 
     def _should_full_scan(self, now: datetime) -> bool:
         if self._last_full_scan_at is None:
             return True
         return now - self._last_full_scan_at >= timedelta(hours=self.full_scan_interval_hours)
 
-    def sync_now(self) -> IncrementalBackupResult:
+    def sync_now(self, force_reconcile: bool = False) -> IncrementalBackupResult:
         started_at = _utc_now()
         with self._lock:
             checkpoint_before = self._checkpoint
             next_checkpoint = checkpoint_before
             changed: List[Dict] = []
             offset = 0
+            mode = "force-reconcile" if force_reconcile else "incremental"
+            self._log(
+                f"sync start mode={mode} checkpoint={checkpoint_before} page_size={self.page_size}"
+            )
 
             while True:
                 payload = self.client.list_changes_since(since=checkpoint_before, limit=self.page_size, offset=offset)
                 batch = payload.get("items") or []
+                self._log(f"delta page offset={offset} items={len(batch)}")
                 if not batch:
                     break
                 changed.extend(batch)
@@ -209,67 +273,92 @@ class IncrementalBackupService:
                     break
                 offset += self.page_size
 
-            results: List[ConversionResult] = []
-            self.destination_dir.mkdir(parents=True, exist_ok=True)
+        results: List[ConversionResult] = []
+        processed_uuids: set[str] = set()
+        self.destination_dir.mkdir(parents=True, exist_ok=True)
 
-            for note in changed:
-                marker = _marker(note)
-                if marker > next_checkpoint:
-                    next_checkpoint = marker
+        for note in changed:
+            marker = _marker(note)
+            if marker > next_checkpoint:
+                next_checkpoint = marker
 
-                conversion = None
-                if not bool(note.get("deleted_on_app") or note.get("deleted_status")):
-                    conversion = self._download_to_destination(note.get("uuid", ""))
-                    results.append(conversion)
+            uuid = note.get("uuid") or ""
+            deleted_on_app = bool(note.get("deleted_on_app") or note.get("deleted_status"))
 
-                self._update_index_from_sync(note, now=_utc_now(), conversion=conversion)
+            conversion = None
+            if (not deleted_on_app) and uuid and (uuid not in processed_uuids):
+                conversion = self._download_to_destination(uuid)
+                processed_uuids.add(uuid)
 
-            run_artifacts = None
-            success_count = 0
-            failure_count = 0
+            if conversion and conversion.successful:
+                results.append(conversion)
 
-            if results:
-                run_artifacts = create_run_artifacts(self.destination_dir)
-                success_count, failure_count = write_csv(run_artifacts.csv_path, results)
-                write_metadata(
-                    run_artifacts.metadata_path,
-                    started_at=started_at,
-                    ended_at=_utc_now(),
-                    blob_count=len(results),
-                    success_count=success_count,
+            self._update_index_from_sync(note, now=_utc_now(), conversion=conversion)
+
+        run_artifacts = None
+        success_count = 0
+        failure_count = 0
+
+        now = _utc_now()
+        repair_results: List[ConversionResult] = []
+        full_scan_max_marker = 0
+        try:
+            if force_reconcile or self._should_full_scan(now):
+                repair_results, full_scan_max_marker = self._run_full_scan_reconcile(
+                    now=now,
+                    processed_uuids=processed_uuids,
+                    force_repair=force_reconcile,
                 )
+        except Exception:
+            pass
 
-            now = _utc_now()
-            try:
-                if self._should_full_scan(now):
-                    self._run_full_scan_reconcile(now=now)
-            except Exception:
-                # fallback full scan best-effort; sync should still complete with incremental result
-                pass
+        if repair_results:
+            results.extend(repair_results)
 
+        if full_scan_max_marker > next_checkpoint:
+            next_checkpoint = full_scan_max_marker
+
+        if results:
+            run_artifacts = create_run_artifacts(self.destination_dir)
+            success_count, failure_count = write_csv(run_artifacts.csv_path, results)
+            write_metadata(
+                run_artifacts.metadata_path,
+                started_at=started_at,
+                ended_at=_utc_now(),
+                blob_count=len(results),
+                success_count=success_count,
+            )
+
+        with self._lock:
             if next_checkpoint < checkpoint_before:
                 next_checkpoint = checkpoint_before
 
             self._checkpoint = next_checkpoint
             self._last_synced_at = now
             self._last_run_folder = run_artifacts.run_folder if run_artifacts else None
-            self._last_run_count = len(changed)
+            self._last_run_count = len(changed) + len(repair_results)
             self._last_success_count = success_count
             self._last_failure_count = failure_count
             self._last_run_artifacts = run_artifacts
 
             self._save_state()
 
-            return IncrementalBackupResult(
-                checkpoint_before=checkpoint_before,
-                checkpoint_after=next_checkpoint,
-                changed_count=len(changed),
-                success_count=success_count,
-                failure_count=failure_count,
-                started_at=started_at,
-                ended_at=now,
-                run_artifacts=run_artifacts,
-            )
+        self._log(
+            f"sync done changed={len(changed)} repaired={len(repair_results)} "
+            f"checkpoint_before={checkpoint_before} checkpoint_after={next_checkpoint} "
+            f"success={success_count} failure={failure_count}"
+        )
+
+        return IncrementalBackupResult(
+            checkpoint_before=checkpoint_before,
+            checkpoint_after=next_checkpoint,
+            changed_count=len(changed),
+            success_count=success_count,
+            failure_count=failure_count,
+            started_at=started_at,
+            ended_at=now,
+            run_artifacts=run_artifacts,
+        )
 
     def state(self) -> IncrementalBackupState:
         with self._lock:

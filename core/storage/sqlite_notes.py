@@ -179,8 +179,16 @@ class SQLiteNoteRepository:
                 t.PDFTextContents AS SearchPDFTextContents
             FROM NoteDB n
             LEFT JOIN TextSearchDB t ON t.UUID = n.UUID
-            WHERE COALESCE(NULLIF(n.lastDBUpdatedAt, 0), NULLIF(n.LastModifiedAt, 0), NULLIF(n.CreatedAt, 0), 0) > ?
-            ORDER BY COALESCE(NULLIF(n.lastDBUpdatedAt, 0), NULLIF(n.LastModifiedAt, 0), NULLIF(n.CreatedAt, 0), 0) DESC, n.Id DESC
+            WHERE MAX(
+                COALESCE(NULLIF(n.lastDBUpdatedAt, 0), 0),
+                COALESCE(NULLIF(n.LastModifiedAt, 0), 0),
+                COALESCE(NULLIF(n.CreatedAt, 0), 0)
+            ) > ?
+            ORDER BY MAX(
+                COALESCE(NULLIF(n.lastDBUpdatedAt, 0), 0),
+                COALESCE(NULLIF(n.LastModifiedAt, 0), 0),
+                COALESCE(NULLIF(n.CreatedAt, 0), 0)
+            ) DESC, n.Id DESC
             LIMIT ? OFFSET ?
             """,
             (since, limit, offset),

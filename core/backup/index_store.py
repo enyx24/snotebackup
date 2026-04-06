@@ -22,6 +22,21 @@ def _content_from_note(note: Dict) -> str:
     return merged[:20000]
 
 
+def _marker(note: Dict) -> int:
+    candidates: List[int] = []
+    for key in ("last_db_updated_at", "modified_at", "created_at"):
+        value = note.get(key)
+        if value is None:
+            continue
+        try:
+            marker = int(value)
+        except Exception:
+            continue
+        if marker > 0:
+            candidates.append(marker)
+    return max(candidates) if candidates else 0
+
+
 class BackupIndexStore:
     def __init__(self, db_path: Path):
         self.db_path = Path(db_path)
@@ -66,15 +81,7 @@ class BackupIndexStore:
             return
 
         deleted_on_app = int(bool(note.get("deleted_on_app") or note.get("deleted_status")))
-        marker = 0
-        for key in ("last_db_updated_at", "modified_at", "created_at"):
-            value = note.get(key)
-            if value:
-                try:
-                    marker = int(value)
-                    break
-                except Exception:
-                    continue
+        marker = _marker(note)
 
         title = note.get("title") or note.get("recommended_title")
         thumbnail_path = note.get("thumbnail_path")
