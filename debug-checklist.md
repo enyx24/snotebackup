@@ -1,0 +1,14 @@
+- [x] readme.md - defines the intended behavior, service split, and sync contract.
+- [ ] note_service.py - API layer; watch request handling, auth, serialization, and download/media paths.
+- [ ] sqlite_notes.py - SQLite queries and schema coupling; likely source of data shape bugs.
+- [ ] incremental_service.py - main sync loop, checkpointing, reconcile logic, and failure recovery.
+- [ ] index_store.py - backup index persistence, deleted/active state, search, and summary counts.
+- [ ] note_api_client.py - HTTP contract between backup worker and note API.
+- [ ] pdf_text.py - PDF and sdocx text extraction; good candidate for edge-case bugs.
+- [ ] to_sdocx.py - sdocx packing rules, validation, and archive ordering.
+- [ ] extract_text.py - payload decoding and text extraction heuristics.
+- [ ] converter.py and discovery.py - file discovery and conversion pipeline.
+- [ ] backup_service.py and backup.py - web UI and legacy CLI wrappers around the backup flow.
+- [ ] app_config.py and services.yml - config defaults, path handling, and runtime flags.
+- [ ] logging.py - run artifact generation and output metadata.
+- [ ] tests: test_worker.py, test_worker_fix.py, test_worker_post_first_sync.py, test_worker_force_reconcile.py, test_timing.py - these show the expected sync behavior and are the best regression guide.

@@ -1,5 +1,5 @@
 services:
-  note_api:
+  client_api:
     enabled: true
     db: 'C:\Users\ASUS\AppData\Local\Packages\SAMSUNGELECTRONICSCoLtd.SamsungNotes_wyx1vj98g3asy\LocalState\Storage.sqlite'
     source: 'C:\Users\ASUS\AppData\Local\Packages\SAMSUNGELECTRONICSCoLtd.SamsungNotes_wyx1vj98g3asy\LocalState\wdoc'
@@ -11,7 +11,7 @@ services:
       download: true
       media_review: true
 
-  backup_ui:
+  server_ui:
     enabled: true
     note_api_url: "http://127.0.0.1:5055"
     token: "change-me-note-api-token"

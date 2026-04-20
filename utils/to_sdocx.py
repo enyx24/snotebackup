@@ -1,9 +1,7 @@
 import zipfile
 import os
-import struct
-
-
-DOS_EPOCH = (1980, 1, 1, 0, 0, 0)
+import struct 
+from config.constants import DOS_EPOCH
 
 
 def _has_note_markers(folder_path):

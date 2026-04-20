@@ -1,10 +1,5 @@
 import zipfile
-METHOD_NAMES = {
-    zipfile.ZIP_STORED: "STORED",
-    zipfile.ZIP_DEFLATED: "DEFLATED",
-    zipfile.ZIP_BZIP2: "BZIP2",
-    zipfile.ZIP_LZMA: "LZMA",
-}
+from config.constants import METHOD_NAMES
 
 def get_zip_info(file_dir):
     try:
