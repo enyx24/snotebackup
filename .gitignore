@@ -14,3 +14,7 @@ __pycache__
 
 # sqlite database
 sqlite/
+
+# log files
+logs/
+*.log

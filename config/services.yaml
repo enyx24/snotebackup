@@ -1,0 +1,24 @@
+services:
+  client:
+    enabled: true
+    db: 'D:\WpSystem\S-1-5-21-160569134-3875188932-209493986-1001\AppData\Local\Packages\SAMSUNGELECTRONICSCoLtd.SamsungNotes_wyx1vj98g3asy\LocalState\Storage.sqlite'
+    source: 'D:\WpSystem\S-1-5-21-160569134-3875188932-209493986-1001\AppData\Local\Packages\SAMSUNGELECTRONICSCoLtd.SamsungNotes_wyx1vj98g3asy\LocalState\wdoc'
+    host: "127.0.0.1"
+    port: 5055
+    refresh_seconds: 60
+    token: "change-me-note-api-token"
+    log_level: "INFO"
+    log_file: "client.log"
+    log_max_mb: 10
+    log_backups: 20
+
+  server:
+    enabled: true
+    note_api_url: "http://127.0.0.1:5055"
+    token: "change-me-note-api-token"
+    destination: 'D:\backupnotestest'
+    host: "127.0.0.1"
+    port: 5056
+    features:
+      download: true
+      media_review: true
